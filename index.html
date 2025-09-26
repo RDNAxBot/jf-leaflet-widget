@@ -40,96 +40,55 @@
     const $status = document.getElementById('status');
     const setStatus = (msg, cls='ok') => { $status.textContent = msg; $status.className = 'status '+cls; };
 
-    let settings = {
-      center: [-31.9535, 115.8570],
+    // ----- Default settings (used for standalone preview) -----
+    const defaultSettings = {
+      center: [-31.9535, 115.8570], // Perth
       zoom: 14,
       allowShapes: ['polygon','rectangle','marker','polyline'],
       requireFeature: true,
       // WMS
-      wmsUrl: '', wmsLayers: '', wmsFormat: 'image/png', wmsTransparent: 'false',
+      wmsUrl: '', wmsLayers: '', wmsFormat: 'image/png', wmsTransparent: false,
       // WMTS
       wmtsUrl: '', wmtsLayer: '', wmtsTileMatrixSet: '', wmtsFormat: 'image/png',
       fitBounds: ''
     };
 
-    function parseSettings(){
-      const s = (JFCustomWidget.getWidgetSetting && JFCustomWidget.getWidgetSetting()) || {};
-      const num = (v, d) => isNaN(+v) ? d : +v;
-
-      if (s.center) {
-        const p = String(s.center).split(',').map(Number);
-        if (p.length===2 && p.every(n=>!isNaN(n))) settings.center = [p[0], p[1]];
-      }
-      settings.zoom = num(s.zoom ?? settings.zoom, settings.zoom);
-      settings.allowShapes = String(s.allowShapes ?? settings.allowShapes.join(',')).split(',').map(v=>v.trim());
-      settings.requireFeature = String(s.requireFeature ?? 'true').toLowerCase()==='true';
-
-      settings.wmsUrl = String(s.wmsUrl||'').trim();
-      settings.wmsLayers = String(s.wmsLayers||'').trim();
-      settings.wmsFormat = String(s.wmsFormat||'image/png').trim();
-      settings.wmsTransparent = String(s.wmsTransparent||'false').trim().toLowerCase()==='true';
-
-      settings.wmtsUrl = String(s.wmtsUrl||'').trim();
-      settings.wmtsLayer = String(s.wmtsLayer||'').trim();
-      settings.wmtsTileMatrixSet = String(s.wmtsTileMatrixSet||'').trim();
-      settings.wmtsFormat = String(s.wmtsFormat||'image/png').trim();
-
-      settings.fitBounds = String(s.fitBounds||'').trim();
-    }
-
-    function toFeature(layer){
-      const gj = layer.toGeoJSON();
-      return gj.type==='Feature' ? gj : { type:'Feature', geometry:gj, properties:{} };
-    }
-
-    function collectFC(map){
-      const features = [];
-      map.eachLayer(l=>{
-        // keep only drawn vector layers (wm*s and basemap layers don't have pm)
-        if (l.pm && l.toGeoJSON && !l.getAttribution) {
-          const f = toFeature(l);
-          if (f.geometry && f.geometry.type) features.push(f);
-        }
-      });
-      return { type:'FeatureCollection', features };
-    }
-
-    function validateFC(fc){
-      if (settings.requireFeature && (!fc.features || fc.features.length===0)) {
-        return { ok:false, reason:'At least one shape is required.' };
-      }
-      return { ok:true };
-    }
-
-    JFCustomWidget.subscribe('ready', function(){
-      parseSettings();
-
+    // ----- Build the map using provided settings -----
+    function initMap(settings){
       const map = L.map('map').setView(settings.center, settings.zoom);
 
-      // --- Basemap selection: prefer WMS if provided, else WMTS ---
+      // Basemap: prefer WMS, then WMTS, else OSM fallback (so it always shows something)
+      let basemapAdded = false;
+
       if (settings.wmsUrl && settings.wmsLayers) {
         L.tileLayer.wms(settings.wmsUrl, {
           layers: settings.wmsLayers,
-          format: settings.wmsFormat,
-          transparent: settings.wmsTransparent,
+          format: settings.wmsFormat || 'image/png',
+          transparent: !!settings.wmsTransparent,
           attribution: '© RocketDNA Ltd 2025'
         }).addTo(map);
+        basemapAdded = true;
       } else if (settings.wmtsUrl && settings.wmtsLayer && settings.wmtsTileMatrixSet) {
-        // Common WMTS templates look like:
-        // https://server/wmts/{layer}/{TileMatrixSet}/{z}/{y}/{x}.png   (varies by server)
         L.tileLayer.wmts(settings.wmtsUrl, {
           layer: settings.wmtsLayer,
           tilematrixSet: settings.wmtsTileMatrixSet,
-          format: settings.wmtsFormat,
+          format: settings.wmtsFormat || 'image/png',
           attribution: '© RocketDNA Ltd 2025'
         }).addTo(map);
-      } else {
-        setStatus('No WMS/WMTS configured. Please fill widget settings.', 'warn');
+        basemapAdded = true;
+      }
+
+      if (!basemapAdded) {
+        // Fallback while testing/previewing
+        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          maxZoom: 20, attribution: '© OpenStreetMap'
+        }).addTo(map);
+        setStatus('Using OSM fallback (configure WMS/WMTS in widget settings).', 'warn');
       }
 
       // Optional: fit to supplied bounds "south,west,north,east"
       if (settings.fitBounds) {
-        const parts = settings.fitBounds.split(',').map(Number);
+        const parts = String(settings.fitBounds).split(',').map(Number);
         if (parts.length === 4 && parts.every(n=>!isNaN(n))) {
           const b = L.latLngBounds([parts[0], parts[1]], [parts[2], parts[3]]);
           map.fitBounds(b);
@@ -147,16 +106,43 @@
         editMode: true, dragMode: true, removalMode: true
       });
 
+      function toFeature(layer){
+        const gj = layer.toGeoJSON();
+        return gj.type==='Feature' ? gj : { type:'Feature', geometry:gj, properties:{} };
+      }
+
+      function collectFC(){
+        const features = [];
+        map.eachLayer(l=>{
+          // keep only drawn vector layers (basemaps don't have pm)
+          if (l.pm && l.toGeoJSON && !l.getAttribution) {
+            const f = toFeature(l);
+            if (f.geometry && f.geometry.type) features.push(f);
+          }
+        });
+        return { type:'FeatureCollection', features };
+      }
+
+      function validateFC(fc, requireFeature=true){
+        if (requireFeature && (!fc.features || fc.features.length===0)) {
+          return { ok:false, reason:'At least one shape is required.' };
+        }
+        return { ok:true };
+      }
+
       function publish(){
-        const fc = collectFC(map);
-        JFCustomWidget.setValue(JSON.stringify(fc));
-        const v = validateFC(fc);
+        const fc = collectFC();
+        // If running in Jotform, push the value; else just update status
+        if (window.JFCustomWidget && typeof JFCustomWidget.setValue === 'function') {
+          JFCustomWidget.setValue(JSON.stringify(fc));
+        }
+        const v = validateFC(fc, settings.requireFeature);
         setStatus(v.ok ? `Shapes: ${fc.features.length} (ready)` : `Validation: ${v.reason}`, v.ok?'ok':'warn');
       }
 
-      // Restore existing value (if editing submission)
+      // Restore existing value (if editing a submission inside Jotform)
       try {
-        const initial = JFCustomWidget.getValue && JFCustomWidget.getValue();
+        const initial = (window.JFCustomWidget && JFCustomWidget.getValue) ? JFCustomWidget.getValue() : null;
         if (initial) {
           const fc = JSON.parse(initial);
           L.geoJSON(fc).eachLayer(l => { l.addTo(map); if (l.pm) l.pm.enable(); });
@@ -169,18 +155,66 @@
       map.on('pm:remove', publish);
       publish();
 
-      // Submit handshake
-      JFCustomWidget.subscribe('submit', function(){
-        const fc = collectFC(map);
-        const v = validateFC(fc);
-        if (!v.ok) {
-          setStatus(`Cannot submit: ${v.reason}`, 'err');
-          JFCustomWidget.sendSubmit({ valid:false, value:JSON.stringify(fc), message:v.reason });
-          return;
+      // Submit handshake (only meaningful inside Jotform)
+      if (window.JFCustomWidget && typeof JFCustomWidget.subscribe === 'function') {
+        JFCustomWidget.subscribe('submit', function(){
+          const fc = collectFC();
+          const v = validateFC(fc, settings.requireFeature);
+          if (!v.ok) {
+            setStatus(`Cannot submit: ${v.reason}`, 'err');
+            JFCustomWidget.sendSubmit({ valid:false, value:JSON.stringify(fc), message:v.reason });
+            return;
+          }
+          JFCustomWidget.sendSubmit({ valid:true, value:JSON.stringify(fc) });
+        });
+      }
+    }
+
+    // ----- Get settings from Jotform (if present) -----
+    function readSettingsFromJotform(){
+      const base = { ...defaultSettings };
+      try {
+        const s = (JFCustomWidget.getWidgetSetting && JFCustomWidget.getWidgetSetting()) || {};
+        const num = (v, d) => isNaN(+v) ? d : +v;
+
+        if (s.center) {
+          const p = String(s.center).split(',').map(Number);
+          if (p.length===2 && p.every(n=>!isNaN(n))) base.center = [p[0], p[1]];
         }
-        JFCustomWidget.sendSubmit({ valid:true, value:JSON.stringify(fc) });
+        base.zoom = num(s.zoom ?? base.zoom, base.zoom);
+        base.allowShapes = String(s.allowShapes ?? base.allowShapes.join(',')).split(',').map(v=>v.trim());
+        base.requireFeature = String(s.requireFeature ?? 'true').toLowerCase()==='true';
+
+        base.wmsUrl = String(s.wmsUrl||'').trim();
+        base.wmsLayers = String(s.wmsLayers||'').trim();
+        base.wmsFormat = String(s.wmsFormat||'image/png').trim();
+        base.wmsTransparent = String(s.wmsTransparent||'false').trim().toLowerCase()==='true';
+
+        base.wmtsUrl = String(s.wmtsUrl||'').trim();
+        base.wmtsLayer = String(s.wmtsLayer||'').trim();
+        base.wmtsTileMatrixSet = String(s.wmtsTileMatrixSet||'').trim();
+        base.wmtsFormat = String(s.wmtsFormat||'image/png').trim();
+
+        base.fitBounds = String(s.fitBounds||'').trim();
+      } catch(e) {
+        console.warn('Settings parse error', e);
+      }
+      return base;
+    }
+
+    // ===== ENTRY POINTS =====
+    if (window.JFCustomWidget && typeof JFCustomWidget.subscribe === 'function') {
+      // Inside Jotform → wait for widget 'ready', then init with Jotform settings
+      JFCustomWidget.subscribe('ready', function(){
+        const jfSettings = readSettingsFromJotform();
+        initMap(jfSettings);
       });
-    });
+    } else {
+      // Standalone (direct browser) → init immediately with defaults and OSM fallback
+      document.addEventListener('DOMContentLoaded', function(){
+        initMap(defaultSettings);
+      });
+    }
   </script>
 </body>
 </html>
