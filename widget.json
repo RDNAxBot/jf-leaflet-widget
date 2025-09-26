@@ -1,0 +1,23 @@
+{
+  "title": "Leaflet Draw (WMS/WMTS)",
+  "description": "Draw polygons/lines/points on your own WMS/WMTS imagery and submit GeoJSON.",
+  "showLoadingOverlay": true,
+  "width": 1000,
+  "height": 600,
+  "sandbox": true,
+  "src": "https://RDNAxBot.github.io/jf-leaflet-widget/index.html",
+  "properties": [
+    { "name": "center", "label": "Default Map Center (lat,lng)", "value": "-31.9535,115.8570" },
+    { "name": "zoom", "label": "Default Zoom", "value": "14" },
+    { "name": "allowShapes", "label": "Allowed Shapes (comma)", "value": "polygon,rectangle,marker,polyline" },
+    { "name": "requireFeature", "label": "Require at least one shape", "value": "true" },
+
+    /* --- WMS option --- */
+    { "name": "wmsUrl", "label": "WMS URL (e.g. https://server/geoserver/wms)", "value": "" },
+    { "name": "wmsLayers", "label": "WMS Layers (workspace:layer)", "value": "" },
+    { "name": "wmsFormat", "label": "WMS Image Format", "value": "image/png" },
+    { "name": "wmsTransparent", "label": "WMS Transparent (true/false)", "value": "false" },
+
+    { "name": "fitBounds", "label": "Fit to Bounds (south,west,north,east)", "value": "" }
+  ]
+}
